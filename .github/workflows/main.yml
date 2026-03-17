@@ -84,7 +84,7 @@ jobs:
       - name: Generate demo EXE
         shell: pwsh
         run: |
-          echo "Demo binary content" > UNSIGNED.EXE
+          echo "Demo binary content" > unsigned.ps1
           Write-Host "Dummy EXE created"
 
       # 6️⃣ Sign using STM simple signing
@@ -92,7 +92,7 @@ jobs:
         uses: digicert/code-signing-software-trust-action@main
         with:
           simple-signing-mode: true
-          input: UNSIGNED.EXE
+          input: unsigned.ps1
           keypair-alias: demo-signing-key-hsm
         env:
           SM_HOST: ${{ vars.SM_HOST }}
@@ -104,11 +104,11 @@ jobs:
       - name: Verify signature
         shell: pwsh
         run: |
-          signtool verify /pa UNSIGNED.EXE
+          signtool verify /pa unsigned.ps1
 
       # 8️⃣ Upload signed artifact (optional but recommended)
       - name: Upload signed file
         uses: actions/upload-artifact@v4
         with:
           name: signed-exe
-          path: UNSIGNED.EXE
+          path: unsigned.ps1
