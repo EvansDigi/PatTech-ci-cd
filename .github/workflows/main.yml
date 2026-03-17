@@ -1,1 +1,114 @@
+name: STM normal signing demo
 
+on:
+  workflow_dispatch:
+  push:
+    branches: ["main"]
+
+jobs:
+  sign:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # 1️⃣ Decode Base64 client certificate
+      - name: Decode client auth certificate (P12)
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          CERT_PATH="${RUNNER_TEMP}/sm_client_cert.p12"
+
+          echo "${{ secrets.SM_CLIENT_CERT_FILE_B64 }}" | tr -d '\r\n' | base64 --decode > "$CERT_PATH"
+
+          if [ ! -f "$CERT_PATH" ]; then
+            echo "❌ Client cert file was not created"
+            exit 1
+          fi
+
+          echo "SM_CLIENT_CERT_FILE=$CERT_PATH" >> "$GITHUB_ENV"
+          echo "✅ Client cert decoded"
+
+      # 2️⃣ Validate STM configuration
+      - name: Validate STM config
+        shell: bash
+        env:
+          SM_HOST: ${{ vars.SM_HOST }}
+          SM_API_KEY: ${{ secrets.SM_API_KEY }}
+          SM_CLIENT_CERT_PASSWORD: ${{ secrets.SM_CLIENT_CERT_PASSWORD }}
+          SM_CLIENT_CERT_FILE: ${{ env.SM_CLIENT_CERT_FILE }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "${SM_HOST:-}" ]; then
+            echo "❌ SM_HOST missing"
+            exit 1
+          fi
+
+          if [[ "$SM_HOST" != *"clientauth"* ]]; then
+            echo "❌ SM_HOST must contain 'clientauth'"
+            exit 1
+          fi
+
+          if [ ! -f "$SM_CLIENT_CERT_FILE" ]; then
+            echo "❌ Client cert file missing"
+            exit 1
+          fi
+
+          echo "🔍 Validating P12..."
+          openssl pkcs12 -in "$SM_CLIENT_CERT_FILE" -noout -passin pass:"$SM_CLIENT_CERT_PASSWORD"
+
+          echo "✅ STM config validated"
+
+      # 3️⃣ Install STM tools (smctl)
+      - name: Install DigiCert STM tools
+        uses: digicert/ssm-code-signing@v1.1.0
+        env:
+          FORCE_DOWNLOAD_TOOLS: "true"
+
+      # 4️⃣ Confirm smctl is available
+      - name: Confirm smctl installed
+        shell: pwsh
+        run: |
+          $cmd = Get-Command smctl -ErrorAction SilentlyContinue
+          if (-not $cmd) {
+            Write-Error "smctl not found"
+            exit 1
+          }
+          Write-Host "smctl found at $($cmd.Source)"
+          smctl -v
+
+      # 5️⃣ Generate dummy EXE (for POV demo)
+      - name: Generate demo EXE
+        shell: pwsh
+        run: |
+          echo "Demo binary content" > UNSIGNED.EXE
+          Write-Host "Dummy EXE created"
+
+      # 6️⃣ Sign using STM simple signing
+      - name: Sign EXE using STM
+        uses: digicert/code-signing-software-trust-action@main
+        with:
+          simple-signing-mode: true
+          input: UNSIGNED.EXE
+          keypair-alias: demo-signing-key-hsm
+        env:
+          SM_HOST: ${{ vars.SM_HOST }}
+          SM_API_KEY: ${{ secrets.SM_API_KEY }}
+          SM_CLIENT_CERT_FILE: ${{ env.SM_CLIENT_CERT_FILE }}
+          SM_CLIENT_CERT_PASSWORD: ${{ secrets.SM_CLIENT_CERT_PASSWORD }}
+
+      # 7️⃣ Verify signature
+      - name: Verify signature
+        shell: pwsh
+        run: |
+          signtool verify /pa UNSIGNED.EXE
+
+      # 8️⃣ Upload signed artifact (optional but recommended)
+      - name: Upload signed file
+        uses: actions/upload-artifact@v4
+        with:
+          name: signed-exe
+          path: UNSIGNED.EXE
